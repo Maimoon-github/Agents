@@ -1,0 +1,60 @@
+version: "2026.1"
+system:
+  environment: "production"
+  log_level: "INFO"
+  timezone: "Asia/Karachi"
+
+inference_endpoints:
+  primary:
+    provider: "ollama"
+    base_url: "http://127.0.0.1:11434/v1"
+    model_name: "llama3.3:70b-instruct"
+    context_window: 131072
+    temperature: 0.3
+    max_tokens: 4096
+    timeout_sec: 90
+  evaluator:
+    provider: "ollama"
+    base_url: "http://127.0.0.1:11434/v1"
+    model_name: "llama3.3:70b-instruct"
+    temperature: 0.0
+    max_tokens: 2048
+  vision:
+    provider: "ollama"
+    base_url: "http://127.0.0.1:11434/v1"
+    model_name: "llama3.2:11b-vision"
+    temperature: 0.1
+
+mcp_servers:
+  social_connectors:
+    transport: "sse"
+    url: "http://127.0.0.1:8001/sse"
+    timeout_sec: 30
+    retry_policy:
+      max_attempts: 3
+      backoff_multiplier: 1.5
+
+vector_database:
+  engine: "chroma"
+  persist_directory: "/var/data/chromadb"
+  collection_name: "brand_governance_rag"
+  embedding_model: "nomic-embed-text-v1.5"
+
+governance:
+  quality_threshold: 0.90
+  max_self_healing_retries: 3
+  mandatory_hitl_platforms:
+    - "x_twitter"
+    - "tiktok"
+  prohibited_keywords:
+    - "revolutionize"
+    - "synergy"
+    - "disruptive"
+    - "game-changer"
+
+telemetry:
+  opentelemetry_enabled: true
+  langfuse_host: "https://cloud.langfuse.com"
+  cost_caps:
+    max_daily_usd: 25.00
+    token_budget_per_campaign: 16000
