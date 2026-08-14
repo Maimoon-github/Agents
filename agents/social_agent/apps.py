@@ -1,3 +1,8 @@
+"""
+social_agent/apps.py
+SocialAgentConfig definition.
+"""
+
 from django.apps import AppConfig
 
 
