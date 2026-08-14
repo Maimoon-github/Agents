@@ -1,4 +1,5 @@
 """
 social_agent/__init__.py
-Social Agent package initialization.
+Django application package initialization.
 """
+default_app_config = "social_agent.apps.SocialAgentConfig"
