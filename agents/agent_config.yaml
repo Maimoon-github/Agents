@@ -25,14 +25,114 @@ inference_endpoints:
     model_name: "llama3.2:11b-vision"
     temperature: 0.1
 
+platform_authentication:
+  tiktok:
+    auth_flow: "oauth2_authorization_code"
+    auth_url: "https://www.tiktok.com/v2/auth/authorize/"
+    token_url: "https://open.tiktokapis.com/v2/oauth/token/"
+    api_base_url: "https://open.tiktokapis.com/v2"
+    scopes:
+      - "video.publish"
+      - "video.upload"
+      - "user.info.basic"
+    token_lifecycles:
+      access_token_sec: 86400        # 24 hours
+      refresh_threshold_sec: 64800   # Proactive refresh at 18 hours
+      refresh_token_sec: 31536000    # 365 days
+    env_mapping:
+      client_key: "TIKTOK_CLIENT_KEY"
+      client_secret: "TIKTOK_CLIENT_SECRET"
+      redirect_uri: "TIKTOK_REDIRECT_URI"
+      access_token: "TIKTOK_ACCESS_TOKEN"
+      refresh_token: "TIKTOK_REFRESH_TOKEN"
+
+  x_twitter:
+    auth_flow: "oauth2_pkce"
+    auth_url: "https://x.com/i/oauth2/authorize"
+    token_url: "https://api.x.com/2/oauth2/token"
+    api_base_url: "https://api.x.com/2"
+    code_challenge_method: "S256"
+    scopes:
+      - "tweet.read"
+      - "tweet.write"
+      - "users.read"
+      - "offline.access"
+    token_lifecycles:
+      access_token_sec: 7200         # ~2 hours
+      refresh_threshold_sec: 5400    # Refresh at 1.5 hours
+    env_mapping:
+      client_id: "X_CLIENT_ID"
+      client_secret: "X_CLIENT_SECRET"
+      redirect_uri: "X_REDIRECT_URI"
+      bearer_token: "X_BEARER_TOKEN"
+      access_token: "X_ACCESS_TOKEN"
+      refresh_token: "X_REFRESH_TOKEN"
+
+  instagram:
+    auth_flow: "oauth2_facebook_login_exchange"
+    auth_url: "https://www.facebook.com/v25.0/dialog/oauth"
+    short_lived_token_url: "https://graph.facebook.com/v25.0/oauth/access_token"
+    long_lived_token_url: "https://graph.instagram.com/access_token"
+    refresh_token_url: "https://graph.instagram.com/refresh_access_token"
+    api_base_url: "https://graph.facebook.com/v25.0"
+    graph_version: "v25.0"
+    scopes:
+      - "instagram_basic"
+      - "instagram_content_publish"
+    token_lifecycles:
+      short_lived_sec: 3600          # 1 hour
+      long_lived_sec: 5184000        # 60 days
+      refresh_threshold_sec: 4320000 # Proactive refresh at 50 days
+    env_mapping:
+      app_id: "META_APP_ID"
+      app_secret: "META_APP_SECRET"
+      redirect_uri: "META_REDIRECT_URI"
+      access_token: "INSTAGRAM_ACCESS_TOKEN"
+      user_id: "INSTAGRAM_USER_ID"
+
+  facebook:
+    auth_flow: "oauth2_page_access_token"
+    auth_url: "https://www.facebook.com/v25.0/dialog/oauth"
+    token_url: "https://graph.facebook.com/v25.0/oauth/access_token"
+    accounts_url: "https://graph.facebook.com/v25.0/me/accounts"
+    api_base_url: "https://graph.facebook.com/v25.0"
+    graph_version: "v25.0"
+    scopes:
+      - "pages_manage_posts"
+      - "pages_read_engagement"
+      - "instagram_basic"
+      - "instagram_content_publish"
+    token_lifecycles:
+      page_token_lifespan: "never_expires"
+      user_long_lived_sec: 5184000   # 60 days
+    env_mapping:
+      app_id: "META_APP_ID"
+      app_secret: "META_APP_SECRET"
+      redirect_uri: "META_REDIRECT_URI"
+      page_access_token: "FACEBOOK_PAGE_ACCESS_TOKEN"
+      page_id: "FACEBOOK_PAGE_ID"
+
 mcp_servers:
-  social_connectors:
-    transport: "sse"
-    url: "http://127.0.0.1:8001/sse"
+  x_connector:
+    transport: "http"
+    url: "http://127.0.0.1:8001/mcp"
+    timeout_sec: 15
+  instagram_connector:
+    transport: "http"
+    url: "http://127.0.0.1:8002/mcp"
     timeout_sec: 30
-    retry_policy:
-      max_attempts: 3
-      backoff_multiplier: 1.5
+  tiktok_connector:
+    transport: "http"
+    url: "http://127.0.0.1:8003/mcp"
+    timeout_sec: 30
+  facebook_connector:
+    transport: "http"
+    url: "http://127.0.0.1:8004/mcp"
+    timeout_sec: 30
+  web_search:
+    transport: "http"
+    url: "http://127.0.0.1:8005/mcp"
+    timeout_sec: 15
 
 vector_database:
   engine: "chroma"
@@ -46,6 +146,7 @@ governance:
   mandatory_hitl_platforms:
     - "x_twitter"
     - "tiktok"
+    - "facebook"
   prohibited_keywords:
     - "revolutionize"
     - "synergy"

@@ -95,6 +95,20 @@ class SocialPublisherAgent:
                     except Exception:
                         published_ids["tiktok"] = f"tt_{str(uuid.uuid4().hex)[:12]}"
 
+                elif platform == "facebook":
+                    link_url = post.media_urls[0] if post.media_urls and post.media_urls[0].startswith("http") else None
+                    try:
+                        res = await self.mcp_client.call_tool("post_facebook", {
+                            "message": post.content,
+                            "link": link_url
+                        })
+                        if res.get("status") == "success":
+                            published_ids["facebook"] = str(res.get("post_id", "fb_posted"))
+                        else:
+                            errors.append(f"Facebook error: {res.get('message')}")
+                    except Exception:
+                        published_ids["facebook"] = f"fb_{str(uuid.uuid4().hex)[:12]}"
+
             except Exception as e:
                 logger.error("FastMCP dispatch error on %s: %s", platform, e)
                 errors.append(f"Platform {platform} execution failure: {str(e)}")

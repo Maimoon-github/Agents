@@ -38,6 +38,8 @@ except ImportError:
         def run(self, transport="http", host="0.0.0.0", port=8003):
             logging.info(f"Running FastMCP {self.name} server on {host}:{port} [{transport}]")
 
+from social_agent.auth import resolve_platform_credentials
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("tiktok", version="1.0.0", stateless_http=True, json_response=True)
@@ -121,18 +123,9 @@ async def post_tiktok(
             "backoff_seconds": 0.0
         }
 
-    # 2. Resolve OAuth Token from Django ORM
-    access_token = os.environ.get("TIKTOK_ACCESS_TOKEN", "mock_tiktok_token")
-    try:
-        from social_agent.models import PlatformAccount
-        query = PlatformAccount.objects.filter(platform="tiktok", is_active=True)
-        if data.account_handle:
-            query = query.filter(account_handle=data.account_handle)
-        account = await query.afirst()
-        if account and account.encrypted_access_token:
-            access_token = account.encrypted_access_token
-    except Exception as db_err:
-        logger.debug("Django ORM token lookup bypassed for TikTok: %s", db_err)
+    # 2. Resolve OAuth Token from PlatformAuthManager
+    creds = await resolve_platform_credentials("tiktok", account_handle=data.account_handle)
+    access_token = creds.get("access_token") or "mock_tiktok_token"
 
     if access_token == "mock_tiktok_token":
         import uuid
@@ -142,7 +135,8 @@ async def post_tiktok(
             "publish_id": mock_pub_id,
             "post_id": f"tt_{mock_pub_id[:12]}",
             "platform": "tiktok",
-            "published_at": datetime.now(timezone.utc).isoformat()
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "auth_source": creds.get("source", "mock")
         }
 
     headers = {
@@ -150,11 +144,21 @@ async def post_tiktok(
         "Content-Type": "application/json; charset=UTF-8"
     }
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=25.0) as client:
         try:
             # Step 1: Pre-flight Creator Info Query
             creator_url = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
             c_resp = await client.post(creator_url, headers=headers, json={})
+
+            if c_resp.status_code == 401 or c_resp.status_code == 403:
+                return {
+                    "status": "failed",
+                    "code": c_resp.status_code,
+                    "message": f"TikTok Authentication Failed: Token expired (24h lifespan exceeded) or missing scopes. {c_resp.text}",
+                    "retryable": False,
+                    "backoff_seconds": 0.0
+                }
+
             if c_resp.status_code == 200:
                 c_data = c_resp.json().get("data", {})
                 privacy_options = c_data.get("privacy_level_options", [])
@@ -224,10 +228,12 @@ async def post_tiktok(
 )
 async def health_check() -> Dict[str, Any]:
     """Returns operational status and version of the TikTok FastMCP connector."""
+    creds = await resolve_platform_credentials("tiktok")
     return {
         "status": "healthy",
         "service": "tiktok_mcp",
         "version": mcp.version,
+        "auth_configured": bool(creds.get("access_token") and creds["access_token"] != "mock_tiktok_token"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 

@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 
 class PlatformPostPayload(BaseModel):
     """Payload schema for an individual platform post draft."""
-    platform: Literal["x_twitter", "instagram", "tiktok"] = Field(..., description="Target platform identifier.")
+    platform: Literal["x_twitter", "instagram", "tiktok", "facebook"] = Field(
+        ..., description="Target platform identifier."
+    )
     content: str = Field(..., description="The copy text for the post.")
     hashtags: List[str] = Field(default_factory=list, description="Extracted hashtags.")
     media_urls: List[str] = Field(default_factory=list, description="Public HTTPS CDN links.")

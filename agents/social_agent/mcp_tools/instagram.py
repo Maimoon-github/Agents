@@ -1,6 +1,6 @@
 """
 social_agent/mcp_tools/instagram.py
-FastMCP 3.4+ connector for Meta Graph API (v22.0) implementing the asynchronous 2-step container pipeline.
+FastMCP 3.4+ connector for Meta Graph API (v22.0/v25.0) implementing the asynchronous 2-step container pipeline.
 """
 import os
 import re
@@ -40,6 +40,8 @@ except ImportError:
         def run(self, transport="http", host="0.0.0.0", port=8002):
             logging.info(f"Running FastMCP {self.name} server on {host}:{port} [{transport}]")
 
+from social_agent.auth import resolve_platform_credentials
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("instagram", version="1.0.0", stateless_http=True, json_response=True)
@@ -52,7 +54,7 @@ class PostInstagramInput(BaseModel):
     media_type: Literal["IMAGE", "VIDEO", "REELS"] = Field(default="IMAGE", description="Media classification.")
     alt_text: Optional[str] = Field(default=None, max_length=100, description="Accessibility alt-text.")
     account_handle: Optional[str] = Field(default=None, description="Instagram business account handle.")
-    graph_version: str = Field(default="v22.0", description="Meta Graph API version.")
+    graph_version: str = Field(default="v25.0", description="Meta Graph API version.")
 
     @validator("media_url")
     def validate_https_url(cls, v):
@@ -83,7 +85,7 @@ async def post_instagram(
     media_type: Literal["IMAGE", "VIDEO", "REELS"] = "IMAGE",
     alt_text: Optional[str] = None,
     account_handle: Optional[str] = None,
-    graph_version: str = "v22.0",
+    graph_version: str = "v25.0",
     ctx: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
@@ -96,7 +98,7 @@ async def post_instagram(
         media_type: 'IMAGE', 'VIDEO', or 'REELS'.
         alt_text: Visual description for accessibility.
         account_handle: Business handle for Django token resolution.
-        graph_version: Meta Graph API version string (default 'v22.0').
+        graph_version: Meta Graph API version string (default 'v25.0').
         ctx: FastMCP telemetry context.
 
     Returns:
@@ -121,19 +123,10 @@ async def post_instagram(
             "backoff_seconds": 0.0
         }
 
-    # 2. Token & User ID Resolution
-    access_token = os.environ.get("INSTAGRAM_ACCESS_TOKEN", "mock_ig_access_token")
-    ig_user_id = os.environ.get("INSTAGRAM_USER_ID", "17841400000000000")
-    try:
-        from social_agent.models import PlatformAccount
-        query = PlatformAccount.objects.filter(platform="instagram", is_active=True)
-        if data.account_handle:
-            query = query.filter(account_handle=data.account_handle)
-        account = await query.afirst()
-        if account and account.encrypted_access_token:
-            access_token = account.encrypted_access_token
-    except Exception as db_err:
-        logger.debug("Django ORM token lookup bypassed for Instagram: %s", db_err)
+    # 2. Token & User ID Resolution from PlatformAuthManager
+    creds = await resolve_platform_credentials("instagram", account_handle=data.account_handle)
+    access_token = creds.get("access_token") or "mock_ig_access_token"
+    ig_user_id = creds.get("user_id") or os.environ.get("INSTAGRAM_USER_ID", "17841400000000000")
 
     if access_token == "mock_ig_access_token":
         import uuid
@@ -143,7 +136,8 @@ async def post_instagram(
             "post_id": mock_id,
             "platform": "instagram",
             "permalink": f"https://www.instagram.com/p/{mock_id[:10]}/",
-            "published_at": datetime.now(timezone.utc).isoformat()
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "auth_source": creds.get("source", "mock")
         }
 
     base_url = f"https://graph.facebook.com/{data.graph_version}"
@@ -162,7 +156,24 @@ async def post_instagram(
                 container_payload["media_type"] = "REELS"
 
             c_resp = await client.post(f"{base_url}/{ig_user_id}/media", data=container_payload)
-            if c_resp.status_code != 200:
+            if c_resp.status_code == 401 or c_resp.status_code == 400:
+                err_text = c_resp.text
+                if "OAuthException" in err_text or "token" in err_text.lower():
+                    return {
+                        "status": "failed",
+                        "code": 401,
+                        "message": f"Instagram Graph API Authentication Failed: Token expired or lacks 'instagram_content_publish' scope ({err_text}).",
+                        "retryable": False,
+                        "backoff_seconds": 0.0
+                    }
+                return {
+                    "status": "failed",
+                    "code": c_resp.status_code,
+                    "message": f"Container creation failed: {err_text}",
+                    "retryable": False,
+                    "backoff_seconds": 0.0
+                }
+            elif c_resp.status_code != 200:
                 return {
                     "status": "failed",
                     "code": c_resp.status_code,
@@ -248,10 +259,13 @@ async def post_instagram(
 )
 async def health_check() -> Dict[str, Any]:
     """Returns operational status and version of the Instagram FastMCP connector."""
+    creds = await resolve_platform_credentials("instagram")
     return {
         "status": "healthy",
         "service": "instagram_mcp",
         "version": mcp.version,
+        "auth_configured": bool(creds.get("access_token") and creds["access_token"] != "mock_ig_access_token"),
+        "user_id_configured": bool(creds.get("user_id")),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 

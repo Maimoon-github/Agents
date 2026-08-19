@@ -1,6 +1,6 @@
 """
 social_agent/mcp_tools/x_twitter.py
-FastMCP 3.4+ connector for X (Twitter) API v2 with OAuth2 token resolution and rate-limit parsing.
+FastMCP 3.4+ connector for X (Twitter) API v2 with OAuth2 PKCE / Bearer token resolution and rate-limit parsing.
 """
 import os
 import sys
@@ -38,6 +38,8 @@ except ImportError:
 
         def run(self, transport="http", host="0.0.0.0", port=8001):
             logging.info(f"Running FastMCP {self.name} server on {host}:{port} [{transport}]")
+
+from social_agent.auth import resolve_platform_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -110,18 +112,9 @@ async def post_x_tweet(
             "backoff_seconds": 0.0
         }
 
-    # 2. Resolve OAuth Token from Django ORM or Environment
-    access_token = os.environ.get("TWITTER_BEARER_TOKEN", "mock_x_access_token")
-    try:
-        from social_agent.models import PlatformAccount
-        query = PlatformAccount.objects.filter(platform="x_twitter", is_active=True)
-        if validated_input.account_handle:
-            query = query.filter(account_handle=validated_input.account_handle)
-        account = await query.afirst()
-        if account and account.encrypted_access_token:
-            access_token = account.encrypted_access_token
-    except Exception as db_err:
-        logger.debug("Django ORM token lookup bypassed (using environment token): %s", db_err)
+    # 2. Resolve OAuth Token from PlatformAuthManager (DB or Environment)
+    creds = await resolve_platform_credentials("x_twitter", account_handle=validated_input.account_handle)
+    access_token = creds.get("access_token") or "mock_x_access_token"
 
     # 3. Construct Twitter API v2 Payload
     api_payload: Dict[str, Any] = {"text": validated_input.text}
@@ -130,14 +123,14 @@ async def post_x_tweet(
     if validated_input.reply_to_tweet_id:
         api_payload["reply"] = {"in_reply_to_tweet_id": validated_input.reply_to_tweet_id}
 
-    url = "https://api.twitter.com/2/tweets"
+    url = "https://api.x.com/2/tweets"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
     # 4. Dispatch Request via Async HTTP Client
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             if access_token == "mock_x_access_token":
                 import uuid
@@ -148,7 +141,8 @@ async def post_x_tweet(
                     "platform": "x_twitter",
                     "published_at": datetime.now(timezone.utc).isoformat(),
                     "character_count": len(validated_input.text),
-                    "rate_limit_remaining": 99
+                    "rate_limit_remaining": 99,
+                    "auth_source": creds.get("source", "mock")
                 }
 
             response = await client.post(url, json=api_payload, headers=headers)
@@ -170,6 +164,15 @@ async def post_x_tweet(
                     "status": "failed",
                     "code": 403,
                     "message": f"X API Forbidden (Duplicate Tweet or Permission Denied): {response.text}",
+                    "retryable": False,
+                    "backoff_seconds": 0.0
+                }
+
+            if response.status_code == 401:
+                return {
+                    "status": "failed",
+                    "code": 401,
+                    "message": "X API Authentication Failed: Access token invalid or expired. Check X_ACCESS_TOKEN or refresh token.",
                     "retryable": False,
                     "backoff_seconds": 0.0
                 }
@@ -204,10 +207,12 @@ async def post_x_tweet(
 )
 async def health_check() -> Dict[str, Any]:
     """Returns the operational status and version of the X Twitter FastMCP connector."""
+    creds = await resolve_platform_credentials("x_twitter")
     return {
         "status": "healthy",
         "service": "x_twitter_mcp",
         "version": mcp.version,
+        "auth_configured": bool(creds.get("access_token") and creds["access_token"] != "mock_x_access_token"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 

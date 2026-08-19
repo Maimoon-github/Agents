@@ -12,6 +12,7 @@ __all__ = [
     "x_twitter_mcp",
     "instagram_mcp",
     "tiktok_mcp",
+    "facebook_mcp",
     "web_search_mcp",
 ]
 
@@ -27,6 +28,9 @@ def __getattr__(name: str) -> Any:
     elif name == "tiktok_mcp":
         from .tiktok import mcp as tiktok_instance
         return tiktok_instance
+    elif name == "facebook_mcp":
+        from .facebook import mcp as facebook_instance
+        return facebook_instance
     elif name == "web_search_mcp":
         from .web_search import mcp as web_search_instance
         return web_search_instance

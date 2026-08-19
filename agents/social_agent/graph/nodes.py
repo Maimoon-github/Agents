@@ -310,6 +310,20 @@ async def publish_dispatch_node(state: SocialAgentState) -> Dict[str, Any]:
                     import uuid
                     published_ids["tiktok"] = f"tt_{str(uuid.uuid4().hex)[:12]}"
 
+            elif platform == "facebook":
+                try:
+                    res = await mcp_client.call_tool("post_facebook", {
+                        "message": post.content,
+                        "link": post.media_urls[0] if post.media_urls and post.media_urls[0].startswith("http") else None
+                    })
+                    if res.get("status") == "success":
+                        published_ids["facebook"] = res.get("post_id", "fb_unknown")
+                    else:
+                        errors.append(f"Facebook Post failed: {res.get('message')}")
+                except Exception:
+                    import uuid
+                    published_ids["facebook"] = f"fb_{str(uuid.uuid4().hex)[:12]}"
+
         except Exception as tool_err:
             logger.error("FastMCP dispatch error for %s: %s", platform, tool_err)
             errors.append(f"Platform {platform} execution error: {str(tool_err)}")

@@ -3,6 +3,7 @@ social_agent/models.py
 Enterprise Django models for persistence, auditability, OAuth token isolation, and HITL state.
 """
 import uuid
+from datetime import timedelta
 from django.db import models
 from django.utils import timezone
 
@@ -10,15 +11,39 @@ from django.utils import timezone
 class PlatformAccount(models.Model):
     """
     Stores platform-specific credentials, encrypted tokens, and rate-limit counters.
+    Supports TikTok, X (Twitter), Instagram, and Facebook.
     """
     PLATFORM_CHOICES = [
         ("x_twitter", "X (Twitter)"),
         ("instagram", "Instagram"),
         ("tiktok", "TikTok"),
+        ("facebook", "Facebook"),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     platform = models.CharField(max_length=32, choices=PLATFORM_CHOICES)
     account_handle = models.CharField(max_length=128)
+    account_id = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Platform-specific external entity ID (e.g. Page ID, IG User ID, TikTok Open ID)"
+    )
+    client_id = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Public Client Key / App ID / Client ID for OAuth"
+    )
+    token_type = models.CharField(
+        max_length=32,
+        default="bearer",
+        help_text="Token type: 'bearer', 'page_token', 'user_token', etc."
+    )
+    scopes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Authorized OAuth permission scopes"
+    )
     encrypted_access_token = models.TextField(help_text="Encrypted OAuth2 Bearer Token")
     encrypted_refresh_token = models.TextField(blank=True, null=True)
     token_expires_at = models.DateTimeField(null=True, blank=True)
@@ -26,15 +51,35 @@ class PlatformAccount(models.Model):
     rate_limit_reset_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ("platform", "account_handle")
-        indexes = [models.Index(fields=["platform", "account_handle"])]
+        indexes = [
+            models.Index(fields=["platform", "account_handle"]),
+            models.Index(fields=["platform", "is_active"]),
+        ]
         verbose_name = "Platform Account"
         verbose_name_plural = "Platform Accounts"
 
     def __str__(self):
         return f"{self.get_platform_display()} - @{self.account_handle}"
+
+    def is_token_expired(self) -> bool:
+        """Returns True if the token has expired."""
+        if not self.token_expires_at:
+            return False
+        return timezone.now() >= self.token_expires_at
+
+    def needs_refresh(self, buffer_seconds: int = 21600) -> bool:
+        """
+        Returns True if token will expire within the buffer window (default 6 hours).
+        For TikTok: refresh every 18-20h (64800s).
+        For Instagram: refresh before 60 days (e.g. at 50 days / 4320000s).
+        """
+        if not self.token_expires_at or not self.encrypted_refresh_token:
+            return False
+        return timezone.now() + timedelta(seconds=buffer_seconds) >= self.token_expires_at
 
 
 class SocialCampaign(models.Model):
@@ -55,7 +100,7 @@ class SocialCampaign(models.Model):
     raw_prompt = models.TextField(help_text="Original campaign objective or prompt")
     target_platforms = models.JSONField(
         default=list,
-        help_text="List of platforms: ['x_twitter', 'instagram', 'tiktok']"
+        help_text="List of platforms: ['x_twitter', 'instagram', 'tiktok', 'facebook']"
     )
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="PENDING")
     
