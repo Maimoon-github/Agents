@@ -67,6 +67,8 @@ from social_agent.memory.vector_store import VectorStoreManager
 
 from social_agent.agents.auditor import ComplianceAuditorAgent
 from social_agent.memory.session_manager import SessionManager
+from social_agent.telemetry.tracing import trace_span
+from social_agent.telemetry.cost_tracker import CostTracker
 
 # Agent Roster Instantiation
 vector_store = VectorStoreManager()
@@ -77,7 +79,54 @@ media_specialist_agent = MediaSpecialistAgent()
 publisher_agent = SocialPublisherAgent(mcp_client=mcp_client)
 auditor_agent = ComplianceAuditorAgent(evaluator=judge_evaluator, safety=safety_guardrail)
 session_manager = SessionManager()
+cost_tracker = CostTracker()
 
+
+import time
+from functools import wraps
+
+def node_telemetry(node_name: str, model_name: str = "llama3.3:70b-instruct"):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(state: SocialAgentState) -> Dict[str, Any]:
+            campaign_id = state.get("campaign_id", "default_campaign")
+            thread_id = state.get("thread_id", f"thread_{campaign_id}")
+            
+            # Circuit Breaker Cost Check
+            if not cost_tracker.check_budget_clearance(campaign_id, estimated_tokens=1000):
+                logger.error(f"Budget exceeded for {campaign_id}. Aborting {node_name}.")
+                return {"error_logs": ["Budget exceeded. Aborted."]}
+                
+            async with trace_span(f"node.{node_name}", {"campaign_id": campaign_id, "thread_id": thread_id}) as span:
+                start_time = time.time()
+                try:
+                    result = await func(state)
+                    latency = time.time() - start_time
+                    
+                    # Estimate tokens from result
+                    p_tok = len(str(state)) // 4
+                    c_tok = len(str(result)) // 4
+                    
+                    usage = cost_tracker.record_step_usage(
+                        campaign_id=campaign_id,
+                        node_name=node_name,
+                        model_name=model_name,
+                        prompt_tokens=p_tok,
+                        completion_tokens=c_tok,
+                        latency_seconds=latency
+                    )
+                    
+                    span.set_attribute("social_agent.latency", latency)
+                    span.set_attribute("social_agent.cost", usage.cost_usd)
+                    
+                    return result
+                except Exception as e:
+                    span.record_exception(e)
+                    raise
+        return wrapper
+    return decorator
+
+@node_telemetry("plan_research", "qwen2.5:32b-instruct")
 async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Plan Node: Delegates to TrendResearcherAgent.
@@ -128,6 +177,7 @@ async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
         "execution_history": history + [f"Research complete. Retrieved combined context."]
     }
 
+@node_telemetry("act_research_and_draft")
 async def act_research_and_draft_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Act Node: Delegates platform-tailored copywriting to CopywritingCrew.
@@ -161,6 +211,7 @@ async def act_research_and_draft_node(state: SocialAgentState) -> Dict[str, Any]
         "execution_history": [f"Act: Generated copy for {list(drafts.keys())}"]
     }
 
+@node_telemetry("media_prep", "llama3.2:11b-vision")
 async def media_prep_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Observe Node: Delegates media validation and vision alt-text to MediaSpecialistAgent.
@@ -187,6 +238,7 @@ async def media_prep_node(state: SocialAgentState) -> Dict[str, Any]:
     }
 
 
+@node_telemetry("evaluate_audit")
 async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Reflect Node: Multi-metric LLM-as-a-Judge evaluation and composite quality gating.
@@ -221,6 +273,7 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     }
 
 
+@node_telemetry("reflect_remedy")
 async def reflect_remedy_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Self-Healing Node: Determines recovery strategy, increments retry counter, and formats feedback.
@@ -252,6 +305,7 @@ async def reflect_remedy_node(state: SocialAgentState) -> Dict[str, Any]:
     }
 
 
+@node_telemetry("hitl_gate")
 async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Human-in-the-Loop Node: Uses LangGraph interrupt() to pause workflow.
@@ -302,6 +356,7 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
     }
 
 
+@node_telemetry("publish_dispatch", "mistral-small:24b")
 async def publish_dispatch_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Publish Node: Delegates to SocialPublisherAgent for MCP tool dispatching.
