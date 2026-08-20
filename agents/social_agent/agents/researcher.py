@@ -70,7 +70,8 @@ class TrendResearcherAgent:
                 verdict = await self.retriever.retrieve_and_evaluate(
                     query=sanitized_prompt,
                     collection_name="brand_governance_rag",
-                    top_k=4
+                    top_k=4,
+                    mcp_client=self.mcp_client
                 )
                 if verdict.documents:
                     brand_chunks = [doc.content for doc in verdict.documents]

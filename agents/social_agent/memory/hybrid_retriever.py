@@ -265,15 +265,19 @@ class HybridRetriever:
         top_k: int = 5,
         tau_low: float = 0.60,
         tau_high: float = 0.85,
-        metadata_filter: Optional[Dict[str, Any]] = None
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        mcp_client: Optional[Any] = None
     ) -> RetrievalVerdict:
         """
-        Executes end-to-end CRAG retrieval:
-        1. Parallel Dense & Sparse search
-        2. Reciprocal Rank Fusion (RRF)
-        3. Cross-Encoder reranking
-        4. Dual-threshold evaluation (CORRECT / AMBIGUOUS / INCORRECT)
+        Executes end-to-end CRAG retrieval task strictly through the four-phase loop:
+        [PLAN] - [ACT] - [OBSERVE] - [REFLECT]
         """
+        logger.info("[PLAN]")
+        logger.info("├── 1. Parse the query, extract target entities/metadata filters, and select target vector collections.")
+        logger.info("└── 2. Selected target vector collection: '%s', with metadata filter: %s", collection_name, metadata_filter)
+        
+        logger.info("[ACT]")
+        logger.info("├── 1. Execute parallel Dense (k-NN) and BM25 queries (retrieving top-3k candidates).")
         dense_task = self.vector_store.dense_search(
             query=query,
             collection_name=collection_name,
@@ -291,33 +295,79 @@ class HybridRetriever:
         dense_docs = dense_results if isinstance(dense_results, list) else []
         sparse_docs = sparse_results if isinstance(sparse_results, list) else []
 
-        # RRF Fusion
+        logger.info("├── 2. Fuse candidate pools via Reciprocal Rank Fusion (k=%d).", self.rrf_k)
         fused_docs = self._reciprocal_rank_fusion(dense_docs, sparse_docs, top_k=top_k * 2)
 
-        # Cross-Encoder Reranking
+        logger.info("└── 3. Invoke the Cross-Encoder reranker on the top-2k fused candidates.")
         ranked_docs = await self._rerank(query, fused_docs)
         final_docs = ranked_docs[:top_k]
 
         top_score = final_docs[0].rerank_score if final_docs and final_docs[0].rerank_score is not None else 0.0
 
+        logger.info("[OBSERVE]")
+        logger.info("├── 1. Inspect Top-k reranked document scores and identify S_max = %.4f.", top_score)
+        logger.info("└── 2. Log dense scores, sparse scores, and Cross-Encoder calibrated probabilities.")
+        for chunk in final_docs:
+            logger.debug("    doc_id=%s, dense=%.4f, sparse=%.4f, rerank=%.4f", 
+                         chunk.doc_id, chunk.dense_score or 0.0, chunk.sparse_score or 0.0, chunk.rerank_score or 0.0)
+
+        logger.info("[REFLECT]")
+        logger.info("├── 1. Compare S_max to tau_low (%.2f) and tau_high (%.2f).", tau_low, tau_high)
+        
         # CRAG 3-Tier Classification
         if top_score >= tau_high:
+            logger.info("├── 2. Route Execution: Tier 1 — High Quality (S_max >= %.2f) => Direct Pass.", tau_high)
             status = RetrievalStatus.CORRECT
             fallback_required = False
             factual_strips = None
         elif tau_low <= top_score < tau_high:
+            logger.info("├── 2. Route Execution: Tier 2 — Ambiguous (%.2f <= S_max < %.2f) => Decompose-Recompose.", tau_low, tau_high)
             status = RetrievalStatus.AMBIGUOUS
             fallback_required = True
             factual_strips = self.decompose_and_recompose(final_docs, query)
         else:
+            logger.info("├── 2. Route Execution: Tier 3 — Incorrect (S_max < %.2f) => Query Rewrite + Web Search.", tau_low)
             status = RetrievalStatus.INCORRECT
             fallback_required = True
             factual_strips = None
+            
+            # Execute rewrite and web search fallback
+            if mcp_client:
+                # Query rewrite string heuristic
+                rewritten_query = f"{query} latest updates and trends" 
+                logger.info("│      Triggering query rewrite: '%s' to FastMCP 'search_trends' tool", rewritten_query)
+                try:
+                    fallback_data = await mcp_client.call_tool(
+                        "search_trends",
+                        {"query": rewritten_query, "timeframe": "24h", "max_results": 3}
+                    )
+                    
+                    trends = fallback_data.get("trends", [])
+                    if trends:
+                        # Convert web fallback data into virtual document objects
+                        from .vector_store import RetrievedDocument
+                        
+                        web_doc = RetrievedDocument(
+                            doc_id="web_fallback_01",
+                            content=" ".join(trends),
+                            metadata={"source": "fastmcp_web_search", "query": rewritten_query},
+                            dense_score=0.99,
+                            sparse_score=10.0,
+                            rrf_score=0.03,
+                            rerank_score=0.90
+                        )
+                        final_docs.insert(0, web_doc)
+                        top_score = 0.90
+                        logger.info("│      Web search succeeded. Injected fallback data into Top-k.")
+                except Exception as e:
+                    logger.error("│      Web search fallback failed: %s", str(e))
+
+        logger.info("└── 3. Assemble and return final RetrievalVerdict payload.")
 
         return RetrievalVerdict(
             status=status,
             top_score=top_score,
-            documents=final_docs,
+            documents=final_docs[:top_k],
             fallback_required=fallback_required,
             factual_strips=factual_strips
         )
