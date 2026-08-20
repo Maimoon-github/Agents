@@ -58,17 +58,36 @@ judge_evaluator = LLMJudgeEvaluator()
 healing_manager = SelfHealingManager(max_retries=3)
 
 
+from social_agent.agents.researcher import TrendResearcherAgent
+from social_agent.agents.copywriter import CopywritingCrew
+from social_agent.agents.media_specialist import MediaSpecialistAgent
+from social_agent.agents.publisher import SocialPublisherAgent
+from social_agent.memory.hybrid_retriever import HybridRetriever
+from social_agent.memory.vector_store import VectorStoreManager
+
+from social_agent.agents.auditor import ComplianceAuditorAgent
+
+# Agent Roster Instantiation
+vector_store = VectorStoreManager()
+hybrid_retriever = HybridRetriever(vector_store=vector_store)
+researcher_agent = TrendResearcherAgent(retriever=hybrid_retriever, mcp_client=mcp_client, safety=safety_guardrail)
+copywriter_agent = CopywritingCrew()
+media_specialist_agent = MediaSpecialistAgent()
+publisher_agent = SocialPublisherAgent(mcp_client=mcp_client)
+auditor_agent = ComplianceAuditorAgent(evaluator=judge_evaluator, safety=safety_guardrail)
+
 async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
     """
-    Plan Node: Validates inbound prompt, runs CRAG retrieval, and queries MCP trend tool.
+    Plan Node: Delegates to TrendResearcherAgent.
     """
     prompt = state.get("original_prompt", "")
     campaign_id = state.get("campaign_id", "default_campaign")
     history = [f"Step: Plan & Research initiated for campaign '{campaign_id}'"]
 
-    # 1. Pre-Execution Safety & Prompt Injection Check
-    scan_res = await safety_guardrail.scan_inbound_prompt(prompt)
-    if not scan_res.is_safe:
+    logger.info("[PLAN] 1. Researcher analyzes user prompt, queries Brand RAG + MCP trends, and constructs ground-truth context.")
+    research_res = await researcher_agent.research_topic(prompt, campaign_id)
+
+    if not research_res.get("is_safe", False):
         return {
             "audit_evaluation": AuditEvaluation(
                 faithfulness_score=0.0,
@@ -77,95 +96,51 @@ async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
                 safety_score=0.0,
                 overall_quality_score=0.0,
                 is_safe=False,
-                reasons=[f"Inbound Security Violation: {scan_res.risk_category} - {'; '.join(scan_res.detected_violations)}"]
+                reasons=[f"Security Breach: {research_res.get('detected_violations')}"]
             ),
-            "error_logs": [f"Security Violation detected in prompt: {scan_res.detected_violations}"],
+            "error_logs": [f"Security Violation detected in prompt: {research_res.get('detected_violations')}"],
             "execution_history": history + ["Security Scan Failed. Halting graph progression."]
         }
 
-    # 2. Live Web Trends Query via FastMCP Tool (with local fallback)
-    retrieved_trends = []
-    try:
-        trend_result = await mcp_client.call_tool("search_trends", {"query": scan_res.sanitized_text})
-        retrieved_trends = trend_result.get("trends", [])
-    except Exception as mcp_err:
-        logger.debug("FastMCP server offline (%s). Using fallback trend insights.", mcp_err)
-        retrieved_trends = [
-            f"Trend insights for '{scan_res.sanitized_text}': Strong audience interest in reproducible architecture blueprints."
-        ]
-
-    # 3. Local Brand Guidelines RAG Context
-    brand_context = [
-        "Brand Voice Rule: Authoritative, innovative, technically grounded.",
-        "Prohibited Terms: revolutionize, synergy, disruptive, game-changer.",
-        "Hashtag Rule: 2-3 focused industry hashtags maximum."
-    ]
-
-    combined_context = brand_context + retrieved_trends
     return {
-        "original_prompt": scan_res.sanitized_text,
-        "research_context": combined_context,
-        "execution_history": history + [f"Research complete. Retrieved {len(retrieved_trends)} trend signals."]
+        "original_prompt": research_res.get("original_prompt", prompt),
+        "research_context": research_res.get("research_context", []),
+        "execution_history": history + [f"Research complete. Retrieved combined context."]
     }
-
 
 async def act_draft_node(state: SocialAgentState) -> Dict[str, Any]:
     """
-    Act Node: Generates platform-tailored copy incorporating context & remediation feedback.
+    Act Node: Delegates platform-tailored copywriting to CopywritingCrew.
     """
     prompt = state.get("original_prompt", "")
     platforms = state.get("target_platforms", ["x_twitter"])
-    context = "\n".join(state.get("research_context", []))
+    context = state.get("research_context", [])
     feedback = state.get("remediation_feedback")
 
-    feedback_instruction = (
-        f"\nCRITICAL REMEDIATION FEEDBACK FROM AUDITOR:\n{feedback}\n"
-        f"You MUST resolve all issues mentioned above.\n"
-        if feedback else ""
+    logger.info("[ACT] Copywriter generates drafts for X, Instagram, and TikTok using channel-specific prompts.")
+    drafts = await copywriter_agent.generate_platform_drafts(
+        prompt=prompt,
+        platforms=platforms,
+        context=context,
+        remediation_feedback=feedback
     )
-
-    drafts: Dict[str, PlatformPostPayload] = {}
-
-    for platform in platforms:
-        sys_msg = SystemMessage(content=(
-            f"You are a Senior Social Media Strategist specializing in {platform}.\n"
-            f"Brand Guidelines & Context:\n{context}\n{feedback_instruction}\n"
-            f"Draft high-engagement copy strictly adhering to {platform} length constraints."
-        ))
-        user_msg = HumanMessage(content=f"Draft a post for objective: {prompt}")
-
-        try:
-            response = await local_llm.ainvoke([sys_msg, user_msg])
-            content_text = response.content.strip()
-        except Exception as e:
-            logger.warning("Local LLM invocation failed (%s). Using fallback copy.", e)
-            content_text = f"Production update on {prompt}: Enhancing agentic automation workflows with verified resilience."
-
-        drafts[platform] = PlatformPostPayload(
-            platform=platform,
-            content=content_text,
-            hashtags=["#AIArchitecture", "#EnterpriseAI"],
-            media_urls=["https://storage.cdn.internal/assets/architecture_diagram_2026.png"],
-            character_count=len(content_text)
-        )
 
     return {
         "draft_posts": drafts,
         "execution_history": [f"Act: Generated copy for {list(drafts.keys())}"]
     }
 
-
 async def media_prep_node(state: SocialAgentState) -> Dict[str, Any]:
     """
-    Observe Node: Inspects media requirements, validates HTTPS URLs, and populates alt-text.
+    Observe Node: Delegates media validation and vision alt-text to MediaSpecialistAgent.
     """
-    drafts = dict(state.get("draft_posts", {}))
-    for platform, post in drafts.items():
-        if post.media_urls:
-            post.alt_text = f"Technical architectural schematic illustrating state graph workflow for {platform}."
+    drafts = state.get("draft_posts", {})
+    
+    logger.info("[ACT] Media Specialist validates media URLs, enforces aspect ratios, and generates vision alt-text.")
+    updated_drafts = await media_specialist_agent.process_media_assets(drafts)
 
     return {
-        "draft_posts": drafts,
+        "draft_posts": updated_drafts,
         "execution_history": ["Observe: Verified media URLs and generated accessibility alt-text."]
     }
 
@@ -178,34 +153,9 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     context = state.get("research_context", [])
     retry_count = state.get("retry_count", 0)
     
-    logger.info("[PLAN] 1. Ingest candidate drafts, resolve target platform rules, and assemble ground-truth Brand RAG context.")
-    logger.info("[ACT] 2. Run pre-execution safety filters, dispatch drafts to the LLM Judge (Temp = 0.0), and calculate individual metric scores.")
+    logger.info("[OBSERVE] Auditor evaluates drafts against Groundedness, Tone, Format, and Safety rubrics, calculating composite score Q.")
     
-    eval_map = await judge_evaluator.batch_evaluate(drafts, context)
-    
-    logger.info("[OBSERVE] 3. Aggregate scores into the composite metric Q, inspect safety flags, and capture any infrastructure exceptions.")
-    
-    worst_eval: Optional[AuditEvaluation] = None
-    all_reasons = []
-
-    for platform, evaluation in eval_map.items():
-        all_reasons.extend(evaluation.reasons)
-        if worst_eval is None or evaluation.overall_quality_score < worst_eval.overall_quality_score:
-            worst_eval = evaluation
-
-    if worst_eval is None:
-        worst_eval = AuditEvaluation(
-            platform="general",
-            overall_quality_score=1.0,
-            is_safe=True,
-            reasons=[],
-            faithfulness_score=1.0,
-            brand_voice_score=1.0,
-            formatting_score=1.0,
-            safety_score=1.0
-        )
-
-    worst_eval.reasons = list(set(all_reasons))
+    worst_eval = await auditor_agent.audit_campaign_drafts(drafts, context)
     
     q_score = worst_eval.overall_quality_score
     s_safety = worst_eval.safety_score
@@ -278,70 +228,17 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
 
 async def publish_dispatch_node(state: SocialAgentState) -> Dict[str, Any]:
     """
-    Publish Node: Dispatches validated posts to social platforms via FastMCP connectors.
+    Publish Node: Delegates to SocialPublisherAgent for MCP tool dispatching.
     """
     drafts = state.get("draft_posts", {})
-    published_ids: Dict[str, str] = {}
-    errors: List[str] = []
-
-    for platform, post in drafts.items():
-        try:
-            if platform == "x_twitter":
-                try:
-                    res = await mcp_client.call_tool("post_x_tweet", {"text": post.content})
-                    if res.get("status") == "success":
-                        published_ids["x_twitter"] = res.get("post_id", "x_unknown")
-                    else:
-                        errors.append(f"X Post failed: {res.get('message')}")
-                except Exception:
-                    import uuid
-                    published_ids["x_twitter"] = f"x_{str(uuid.uuid4().hex)[:12]}"
-                    
-            elif platform == "instagram":
-                try:
-                    res = await mcp_client.call_tool("post_instagram", {
-                        "caption": post.content,
-                        "media_url": post.media_urls[0] if post.media_urls else "https://via.placeholder.com/1080"
-                    })
-                    if res.get("status") == "success":
-                        published_ids["instagram"] = res.get("post_id", "ig_unknown")
-                    else:
-                        errors.append(f"Instagram Post failed: {res.get('message')}")
-                except Exception:
-                    import uuid
-                    published_ids["instagram"] = f"ig_{str(uuid.uuid4().hex)[:12]}"
-
-            elif platform == "tiktok":
-                try:
-                    res = await mcp_client.call_tool("post_tiktok", {
-                        "video_url": "https://storage.cdn.internal/videos/demo.mp4",
-                        "caption": post.content
-                    })
-                    if res.get("status") == "success":
-                        published_ids["tiktok"] = res.get("post_id", "tt_unknown")
-                    else:
-                        errors.append(f"TikTok Post failed: {res.get('message')}")
-                except Exception:
-                    import uuid
-                    published_ids["tiktok"] = f"tt_{str(uuid.uuid4().hex)[:12]}"
-
-            elif platform == "facebook":
-                try:
-                    res = await mcp_client.call_tool("post_facebook", {
-                        "message": post.content,
-                        "link": post.media_urls[0] if post.media_urls and post.media_urls[0].startswith("http") else None
-                    })
-                    if res.get("status") == "success":
-                        published_ids["facebook"] = res.get("post_id", "fb_unknown")
-                    else:
-                        errors.append(f"Facebook Post failed: {res.get('message')}")
-                except Exception:
-                    import uuid
-                    published_ids["facebook"] = f"fb_{str(uuid.uuid4().hex)[:12]}"
-
-        except Exception as tool_err:
-            logger.error("FastMCP dispatch error for %s: %s", platform, tool_err)
-            errors.append(f"Platform {platform} execution error: {str(tool_err)}")
+    hitl_payload = state.get("hitl_payload")
+    
+    logger.info("[REFLECT & ROUTE] Publisher executes FastMCP dispatch to platforms.")
+    
+    dispatch_res = await publisher_agent.publish_all(drafts, hitl_payload)
+    
+    published_ids = dispatch_res.get("published_post_ids", {})
+    errors = dispatch_res.get("errors", [])
 
     return {
         "published_post_ids": published_ids,

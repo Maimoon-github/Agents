@@ -40,46 +40,46 @@ logger = logging.getLogger(__name__)
 
 # Model Configuration Mapping per Role
 MODEL_ROSTER_CONFIG: Dict[str, Dict[str, Any]] = {
-    "primary": {
-        "model": os.environ.get("PRIMARY_LLM_MODEL", "llama3.3:70b-instruct"),
-        "temperature": 0.3,
+    "copywriter": {
+        "model": os.environ.get("COPYWRITER_LLM_MODEL", "llama3.3:70b-instruct"),
+        "temperature": 0.70,
         "max_tokens": 4096,
         "timeout": 60.0,
-        "model_kwargs": {}
+        "model_kwargs": {"top_p": 0.95}
     },
     "researcher": {
         "model": os.environ.get("RESEARCHER_LLM_MODEL", "qwen2.5:32b-instruct"),
-        "temperature": 0.2,
+        "temperature": 0.20,
         "max_tokens": 2048,
         "timeout": 30.0,
-        "model_kwargs": {}
+        "model_kwargs": {"top_p": 0.90}
     },
     "vision": {
         "model": os.environ.get("VISION_LLM_MODEL", "llama3.2:11b-vision"),
-        "temperature": 0.1,
+        "temperature": 0.10,
         "max_tokens": 1024,
         "timeout": 20.0,
-        "model_kwargs": {}
+        "model_kwargs": {"top_p": 0.80}
     },
     "evaluator": {
         "model": os.environ.get("EVALUATOR_LLM_MODEL", "llama3.3:70b-instruct"),
-        "temperature": 0.0,
+        "temperature": 0.00,
         "max_tokens": 2048,
         "timeout": 30.0,
         "model_kwargs": {"response_format": {"type": "json_object"}}
     },
     "publisher": {
         "model": os.environ.get("PUBLISHER_LLM_MODEL", "mistral-small:24b"),
-        "temperature": 0.0,
+        "temperature": 0.00,
         "max_tokens": 1024,
         "timeout": 15.0,
-        "model_kwargs": {"format": "json"}
+        "model_kwargs": {"response_format": {"type": "json_object"}}
     }
 }
 
 
 def get_chat_model(
-    role: str = "primary",
+    role: str = "copywriter",
     temperature: Optional[float] = None,
     timeout: Optional[float] = None
 ) -> ChatOpenAI:
@@ -87,7 +87,7 @@ def get_chat_model(
     Returns an initialized ChatOpenAI client bound to the specified agent role and local Ollama endpoint.
 
     Args:
-        role: Target agent role ('primary', 'researcher', 'vision', 'evaluator', 'publisher').
+        role: Target agent role ('copywriter', 'researcher', 'vision', 'evaluator', 'publisher').
         temperature: Override temperature value.
         timeout: Override timeout in seconds.
 
@@ -97,7 +97,7 @@ def get_chat_model(
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
     api_key = os.environ.get("OLLAMA_API_KEY", "NA")
 
-    cfg = MODEL_ROSTER_CONFIG.get(role, MODEL_ROSTER_CONFIG["primary"])
+    cfg = MODEL_ROSTER_CONFIG.get(role, MODEL_ROSTER_CONFIG["copywriter"])
     model_name = cfg["model"]
     temp = temperature if temperature is not None else cfg["temperature"]
     t_out = timeout if timeout is not None else cfg["timeout"]

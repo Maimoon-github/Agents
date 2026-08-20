@@ -26,7 +26,7 @@ class CopywritingCrew:
     Enforces channel-specific character bounds, hashtag limits, and remediation feedback.
     """
     def __init__(self, llm_model: Optional[Any] = None):
-        self.llm = llm_model or get_chat_model("primary")
+        self.llm = llm_model or get_chat_model("copywriter")
 
     def _get_platform_system_prompt(self, platform: str, context: str, feedback: Optional[str] = None) -> str:
         """Constructs role-specific prompt instructions per social channel."""
