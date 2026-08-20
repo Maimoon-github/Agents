@@ -7,6 +7,8 @@ import logging
 from typing import Dict, Any, Optional, Literal
 from datetime import datetime, timezone
 import httpx
+import time
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, validator
 
 try:
@@ -227,16 +229,26 @@ async def post_tiktok(
     )
 )
 async def health_check() -> Dict[str, Any]:
-    """Returns operational status and version of the TikTok FastMCP connector."""
-    creds = await resolve_platform_credentials("tiktok")
+    """Returns the operational status, version, and connection latency of the FastMCP connector."""
+    import time
+    creds = await resolve_platform_credentials("tiktok") if not "social_agent/mcp_tools/tiktok.py".endswith("web_search.py") else {}
+    t0 = time.time()
+    latency = -1
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.options("https://open.tiktokapis.com/v2/")
+            latency = int((time.time() - t0) * 1000)
+    except Exception:
+        pass
+
     return {
         "status": "healthy",
         "service": "tiktok_mcp",
         "version": mcp.version,
-        "auth_configured": bool(creds.get("access_token") and creds["access_token"] != "mock_tiktok_token"),
+        "auth_configured": bool(creds.get("access_token") and "mock" not in creds.get("access_token", "")),
+        "latency_ms": latency,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

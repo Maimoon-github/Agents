@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime, timezone
 import httpx
+import time
 from pydantic import BaseModel, Field
 
 try:
@@ -199,14 +200,26 @@ async def search_trends(
     )
 )
 async def health_check() -> Dict[str, Any]:
-    """Returns operational status and version of the Web Search FastMCP connector."""
+    """Returns the operational status, version, and connection latency of the FastMCP connector."""
+    import time
+    creds = await resolve_platform_credentials("web_search") if not "social_agent/mcp_tools/web_search.py".endswith("web_search.py") else {}
+    t0 = time.time()
+    latency = -1
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.options("https://api.tavily.com/search")
+            latency = int((time.time() - t0) * 1000)
+    except Exception:
+        pass
+
     return {
         "status": "healthy",
         "service": "web_search_mcp",
         "version": mcp.version,
+        "auth_configured": bool(creds.get("access_token") and "mock" not in creds.get("access_token", "")),
+        "latency_ms": latency,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

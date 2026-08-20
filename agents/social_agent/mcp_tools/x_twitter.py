@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime, timezone
 import httpx
+import time
 from pydantic import BaseModel, Field, validator
 
 try:
@@ -206,16 +207,26 @@ async def post_x_tweet(
     )
 )
 async def health_check() -> Dict[str, Any]:
-    """Returns the operational status and version of the X Twitter FastMCP connector."""
-    creds = await resolve_platform_credentials("x_twitter")
+    """Returns the operational status, version, and connection latency of the FastMCP connector."""
+    import time
+    creds = await resolve_platform_credentials("x_twitter") if not "social_agent/mcp_tools/x_twitter.py".endswith("web_search.py") else {}
+    t0 = time.time()
+    latency = -1
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.options("https://api.x.com/2/tweets")
+            latency = int((time.time() - t0) * 1000)
+    except Exception:
+        pass
+
     return {
         "status": "healthy",
         "service": "x_twitter_mcp",
         "version": mcp.version,
-        "auth_configured": bool(creds.get("access_token") and creds["access_token"] != "mock_x_access_token"),
+        "auth_configured": bool(creds.get("access_token") and "mock" not in creds.get("access_token", "")),
+        "latency_ms": latency,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
