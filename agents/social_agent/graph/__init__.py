@@ -1,6 +1,7 @@
 """
 social_agent/graph/__init__.py
-Unified exports for the LangGraph state machine, nodes, edges, checkpointer, and workflow runner.
+Unified exports for the LangGraph state machine: nodes, edges, checkpointer, and workflow runners.
+All names here match the actual function signatures in their respective modules.
 """
 from .state import (
     SocialAgentState,
@@ -11,7 +12,7 @@ from .state import (
 from .checkpointer import get_postgres_checkpointer
 from .nodes import (
     plan_research_node,
-    act_draft_node,
+    act_research_and_draft_node,   # Canonical name — was incorrectly aliased in prior __init__
     media_prep_node,
     evaluate_audit_node,
     reflect_remedy_node,
@@ -35,7 +36,7 @@ __all__ = [
     "HITLApprovalPayload",
     "get_postgres_checkpointer",
     "plan_research_node",
-    "act_draft_node",
+    "act_research_and_draft_node",
     "media_prep_node",
     "evaluate_audit_node",
     "reflect_remedy_node",

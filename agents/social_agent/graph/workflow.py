@@ -35,6 +35,14 @@ except ImportError:
                     class Snapshot:
                         next = ("hitl_gate",)
                         tasks = ["task_interrupt"]
+                        values = {}
+                    return Snapshot()
+
+                async def aget_state(self, config):
+                    class Snapshot:
+                        next = ()
+                        tasks = []
+                        values = {}
                     return Snapshot()
             return CompiledGraph(self)
 

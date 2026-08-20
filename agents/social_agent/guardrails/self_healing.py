@@ -131,7 +131,7 @@ class SelfHealingManager:
         if category == ErrorCategory.FATAL_SECURITY_BREACH:
             return RemediationDirective(
                 error_category=category,
-                retry_count=current_retry_count,
+                retry_count=max(1, current_retry_count),
                 action=RemediationAction.ABORT_CAMPAIGN,
                 feedback_payload="Fatal security violation detected (Prompt Injection or Unredacted PII). Workflow terminated.",
                 backoff_seconds=0.0
