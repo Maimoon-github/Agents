@@ -54,7 +54,7 @@ class SocialAgentState(TypedDict, total=False):
     campaign_id: str
     thread_id: str
     original_prompt: str
-    target_platforms: List[str]
+    target_platforms: List[Literal["x_twitter", "instagram", "tiktok"]]
 
     # Cognitive Reasoning Stack
     research_context: List[str]

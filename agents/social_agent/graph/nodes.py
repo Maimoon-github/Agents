@@ -108,7 +108,7 @@ async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
         "execution_history": history + [f"Research complete. Retrieved combined context."]
     }
 
-async def act_draft_node(state: SocialAgentState) -> Dict[str, Any]:
+async def act_research_and_draft_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Act Node: Delegates platform-tailored copywriting to CopywritingCrew.
     """
@@ -211,8 +211,10 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
     updated_drafts = dict(drafts)
     for p, text in modified_content.items():
         if p in updated_drafts:
-            updated_drafts[p].content = text
-            updated_drafts[p].character_count = len(text)
+            updated_drafts[p] = updated_drafts[p].copy(update={
+                "content": text,
+                "character_count": len(text)
+            })
 
     return {
         "hitl_payload": HITLApprovalPayload(

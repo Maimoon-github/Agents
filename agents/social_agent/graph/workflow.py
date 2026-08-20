@@ -46,7 +46,7 @@ from social_agent.graph.state import (
 )
 from social_agent.graph.nodes import (
     plan_research_node,
-    act_draft_node,
+    act_research_and_draft_node,
     media_prep_node,
     evaluate_audit_node,
     reflect_remedy_node,
@@ -75,7 +75,7 @@ def create_social_agent_graph(checkpointer: Optional[Any] = None) -> Any:
 
     # 1. Register Nodes
     workflow.add_node("plan_research", plan_research_node)
-    workflow.add_node("act_draft", act_draft_node)
+    workflow.add_node("act_research_and_draft", act_research_and_draft_node)
     workflow.add_node("media_prep", media_prep_node)
     workflow.add_node("evaluate_audit", evaluate_audit_node)
     workflow.add_node("reflect_remedy", reflect_remedy_node)
@@ -84,8 +84,8 @@ def create_social_agent_graph(checkpointer: Optional[Any] = None) -> Any:
 
     # 2. Add Linear Static Transitions
     workflow.add_edge(START, "plan_research")
-    workflow.add_edge("plan_research", "act_draft")
-    workflow.add_edge("act_draft", "media_prep")
+    workflow.add_edge("plan_research", "act_research_and_draft")
+    workflow.add_edge("act_research_and_draft", "media_prep")
     workflow.add_edge("media_prep", "evaluate_audit")
 
     # 3. Add Dynamic Conditional Transitions
@@ -101,7 +101,7 @@ def create_social_agent_graph(checkpointer: Optional[Any] = None) -> Any:
     )
 
     # Loop back from Self-Healing to Drafting
-    workflow.add_edge("reflect_remedy", "act_draft")
+    workflow.add_edge("reflect_remedy", "act_research_and_draft")
 
     # Dynamic HITL Gate Outcome
     workflow.add_conditional_edges(
@@ -149,6 +149,9 @@ async def run_workflow_stream(
         "execution_history": []
     }
 
+    if checkpointer and hasattr(checkpointer, 'setup'):
+        await checkpointer.setup()
+
     graph = create_social_agent_graph(checkpointer=checkpointer)
     logger.info("Starting graph stream for campaign '%s' on thread '%s'", campaign_id, actual_thread_id)
 
@@ -165,6 +168,10 @@ async def resume_workflow_stream(
     Resumes an interrupted graph workflow thread by passing a Command(resume=...) payload.
     """
     config = {"configurable": {"thread_id": thread_id}}
+    
+    if checkpointer and hasattr(checkpointer, 'setup'):
+        await checkpointer.setup()
+        
     graph = create_social_agent_graph(checkpointer=checkpointer)
 
     logger.info("Resuming thread '%s' with approval: %s", thread_id, resume_payload.get("approved"))
