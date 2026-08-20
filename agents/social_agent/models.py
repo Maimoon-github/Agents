@@ -6,6 +6,7 @@ import uuid
 from datetime import timedelta
 from django.db import models
 from django.utils import timezone
+from django_cryptography.fields import encrypt
 
 
 class PlatformAccount(models.Model):
@@ -44,8 +45,12 @@ class PlatformAccount(models.Model):
         blank=True,
         help_text="Authorized OAuth permission scopes"
     )
-    encrypted_access_token = models.TextField(help_text="Encrypted OAuth2 Bearer Token")
-    encrypted_refresh_token = models.TextField(blank=True, null=True)
+    api_key = encrypt(models.CharField(max_length=255, blank=True, null=True, help_text="API Key or Client ID"))
+    api_secret = encrypt(models.CharField(max_length=255, blank=True, null=True, help_text="API Secret or Client Secret"))
+    webhook_secret = encrypt(models.CharField(max_length=255, blank=True, null=True, help_text="Webhook validation secret"))
+    
+    encrypted_access_token = encrypt(models.TextField(help_text="Encrypted OAuth2 Bearer Token", blank=True, null=True))
+    encrypted_refresh_token = encrypt(models.TextField(blank=True, null=True))
     token_expires_at = models.DateTimeField(null=True, blank=True)
     rate_limit_remaining = models.IntegerField(default=100)
     rate_limit_reset_at = models.DateTimeField(null=True, blank=True)
@@ -80,6 +85,37 @@ class PlatformAccount(models.Model):
         if not self.token_expires_at or not self.encrypted_refresh_token:
             return False
         return timezone.now() + timedelta(seconds=buffer_seconds) >= self.token_expires_at
+
+
+class AgentConfiguration(models.Model):
+    """
+    Dynamic hyperparameter configuration for AI Agents, allowing real-time tuning 
+    without application restarts.
+    """
+    ROLE_CHOICES = [
+        ("researcher", "Trend Researcher"),
+        ("copywriter", "Copywriter"),
+        ("media_specialist", "Media Specialist"),
+        ("auditor", "Compliance Auditor"),
+        ("publisher", "Social Publisher"),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_role = models.CharField(max_length=32, choices=ROLE_CHOICES, unique=True)
+    model_name = models.CharField(max_length=128, default="llama3.3:70b-instruct")
+    temperature = models.FloatField(default=0.7)
+    max_tokens = models.IntegerField(default=4000)
+    endpoint_url = models.URLField(blank=True, null=True, help_text="Custom LLM API Endpoint")
+    is_active = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Agent Configuration"
+        verbose_name_plural = "Agent Configurations"
+
+    def __str__(self):
+        return f"{self.get_agent_role_display()} ({self.model_name})"
 
 
 class SocialCampaign(models.Model):

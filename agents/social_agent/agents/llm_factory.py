@@ -85,26 +85,35 @@ def get_chat_model(
 ) -> ChatOpenAI:
     """
     Returns an initialized ChatOpenAI client bound to the specified agent role and local Ollama endpoint.
-
-    Args:
-        role: Target agent role ('copywriter', 'researcher', 'vision', 'evaluator', 'publisher').
-        temperature: Override temperature value.
-        timeout: Override timeout in seconds.
-
-    Returns:
-        Configured ChatOpenAI instance.
+    Attempts to read dynamic AgentConfiguration from the database first, falling back to env/yaml.
     """
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
     api_key = os.environ.get("OLLAMA_API_KEY", "NA")
 
-    cfg = MODEL_ROSTER_CONFIG.get(role, MODEL_ROSTER_CONFIG["copywriter"])
+    cfg = MODEL_ROSTER_CONFIG.get(role, MODEL_ROSTER_CONFIG["copywriter"]).copy()
+
+    # Dynamic DB Override (Graceful DB failure)
+    try:
+        # Import lazily to avoid circular imports during startup
+        from social_agent.models import AgentConfiguration
+        db_cfg = AgentConfiguration.objects.filter(agent_role=role, is_active=True).first()
+        if db_cfg:
+            cfg["model"] = db_cfg.model_name
+            cfg["temperature"] = db_cfg.temperature
+            cfg["max_tokens"] = db_cfg.max_tokens
+            if db_cfg.endpoint_url:
+                base_url = db_cfg.endpoint_url
+    except (ImportError, Exception) as exc:
+        logger.debug("Dynamic agent configuration lookup failed for role '%s', using defaults: %s", role, exc)
+
     model_name = cfg["model"]
     temp = temperature if temperature is not None else cfg["temperature"]
     t_out = timeout if timeout is not None else cfg["timeout"]
     max_tokens = cfg["max_tokens"]
     model_kwargs = cfg.get("model_kwargs", {})
 
-    logger.debug("Initializing LLM for role '%s' [Model: %s, Temp: %s]", role, model_name, temp)
+    logger.debug("Initializing LLM for role '%s' [Model: %s, Temp: %s, MaxTok: %s, URL: %s]", 
+                 role, model_name, temp, max_tokens, base_url)
 
     return ChatOpenAI(
         base_url=base_url,

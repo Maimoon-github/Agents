@@ -61,4 +61,47 @@ class SocialAgentConfig(AppConfig):
             except Exception as otel_err:
                 logger.warning("OpenTelemetry setup failed in apps.ready(): %s", otel_err)
 
+        # 4. Automatic Config Bootstrapping (.env -> Database)
+        try:
+            from django.conf import settings
+            from social_agent.models import PlatformAccount
+            from django.db.utils import OperationalError, ProgrammingError
+
+            if not PlatformAccount.objects.exists():
+                logger.info("Initializing PlatformAccount records from .env configurations...")
+                
+                # Fetch credentials defined in backend.settings.PLATFORM_CREDENTIALS
+                creds = getattr(settings, "PLATFORM_CREDENTIALS", {})
+                
+                # Create X / Twitter
+                if "x_twitter" in creds:
+                    PlatformAccount.objects.get_or_create(
+                        platform="x_twitter",
+                        account_handle="main_account",
+                        defaults={
+                            "client_id": creds["x_twitter"].get("client_id", ""),
+                            "api_key": creds["x_twitter"].get("client_id", ""),
+                            "api_secret": creds["x_twitter"].get("client_secret", ""),
+                            "encrypted_access_token": creds["x_twitter"].get("access_token", ""),
+                            "encrypted_refresh_token": creds["x_twitter"].get("refresh_token", ""),
+                        }
+                    )
+                
+                # Create Instagram
+                if "instagram" in creds:
+                    PlatformAccount.objects.get_or_create(
+                        platform="instagram",
+                        account_handle="main_account",
+                        defaults={
+                            "account_id": creds["instagram"].get("user_id", ""),
+                            "api_key": creds["instagram"].get("app_id", ""),
+                            "api_secret": creds["instagram"].get("app_secret", ""),
+                            "encrypted_access_token": creds["instagram"].get("access_token", ""),
+                        }
+                    )
+
+        except (OperationalError, ProgrammingError, ImportError):
+            # Database tables don't exist yet (e.g. running makemigrations)
+            pass
+
         logger.info("SocialAgentConfig.ready() completed successfully.")
