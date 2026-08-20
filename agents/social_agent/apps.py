@@ -61,11 +61,17 @@ class SocialAgentConfig(AppConfig):
             except Exception as otel_err:
                 logger.warning("OpenTelemetry setup failed in apps.ready(): %s", otel_err)
 
-        # 4. Automatic Config Bootstrapping (.env -> Database)
+        # 4. Automatic Config Bootstrapping on post_migrate
+        from django.db.models.signals import post_migrate
+        post_migrate.connect(self._bootstrap_credentials, sender=self)
+
+        logger.info("SocialAgentConfig.ready() completed successfully.")
+
+    def _bootstrap_credentials(self, sender, **kwargs):
+        """Seeds PlatformAccount records from .env configurations immediately after migrations."""
         try:
             from django.conf import settings
             from social_agent.models import PlatformAccount
-            from django.db.utils import OperationalError, ProgrammingError
 
             if not PlatformAccount.objects.exists():
                 logger.info("Initializing PlatformAccount records from .env configurations...")
@@ -99,9 +105,5 @@ class SocialAgentConfig(AppConfig):
                             "encrypted_access_token": creds["instagram"].get("access_token", ""),
                         }
                     )
-
-        except (OperationalError, ProgrammingError, ImportError):
-            # Database tables don't exist yet (e.g. running makemigrations)
-            pass
-
-        logger.info("SocialAgentConfig.ready() completed successfully.")
+        except Exception as exc:
+            logger.debug("Automatic credential bootstrapping skipped: %s", exc)
