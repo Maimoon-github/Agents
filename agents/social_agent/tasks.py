@@ -12,7 +12,16 @@ import asyncio
 import logging
 from datetime import timezone as tz
 
-from celery import shared_task
+try:
+    from celery import shared_task
+except ImportError:
+    # Graceful degradation stub to unblock 'manage.py makemigrations/check' 
+    # without needing Celery pip installed strictly on the local development environment.
+    def shared_task(*args, **kwargs):
+        def decorator(func):
+            func.delay = lambda *a, **kw: None
+            return func
+        return decorator
 from django.conf import settings
 from langgraph.types import Command
 
