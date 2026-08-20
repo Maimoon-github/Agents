@@ -66,6 +66,7 @@ from social_agent.memory.hybrid_retriever import HybridRetriever
 from social_agent.memory.vector_store import VectorStoreManager
 
 from social_agent.agents.auditor import ComplianceAuditorAgent
+from social_agent.memory.session_manager import SessionManager
 
 # Agent Roster Instantiation
 vector_store = VectorStoreManager()
@@ -75,6 +76,7 @@ copywriter_agent = CopywritingCrew()
 media_specialist_agent = MediaSpecialistAgent()
 publisher_agent = SocialPublisherAgent(mcp_client=mcp_client)
 auditor_agent = ComplianceAuditorAgent(evaluator=judge_evaluator, safety=safety_guardrail)
+session_manager = SessionManager()
 
 async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
     """
@@ -82,12 +84,21 @@ async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     prompt = state.get("original_prompt", "")
     campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     history = [f"Step: Plan & Research initiated for campaign '{campaign_id}'"]
 
     logger.info("[PLAN] 1. Researcher analyzes user prompt, queries Brand RAG + MCP trends, and constructs ground-truth context.")
     research_res = await researcher_agent.research_topic(prompt, campaign_id)
 
     if not research_res.get("is_safe", False):
+        await session_manager.append_turn_event(
+            thread_id=thread_id,
+            campaign_id=campaign_id,
+            node_name="plan_research",
+            input_summary=prompt,
+            output_summary="Security Scan Failed",
+            token_usage={"total_tokens": len(prompt) // 4}
+        )
         return {
             "audit_evaluation": AuditEvaluation(
                 faithfulness_score=0.0,
@@ -101,6 +112,15 @@ async def plan_research_node(state: SocialAgentState) -> Dict[str, Any]:
             "error_logs": [f"Security Violation detected in prompt: {research_res.get('detected_violations')}"],
             "execution_history": history + ["Security Scan Failed. Halting graph progression."]
         }
+        
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="plan_research",
+        input_summary=prompt[:100],
+        output_summary=f"Context items: {len(research_res.get('research_context', []))}",
+        token_usage={"total_tokens": len(str(research_res.get("research_context", []))) // 4}
+    )
 
     return {
         "original_prompt": research_res.get("original_prompt", prompt),
@@ -113,6 +133,8 @@ async def act_research_and_draft_node(state: SocialAgentState) -> Dict[str, Any]
     Act Node: Delegates platform-tailored copywriting to CopywritingCrew.
     """
     prompt = state.get("original_prompt", "")
+    campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     platforms = state.get("target_platforms", ["x_twitter"])
     context = state.get("research_context", [])
     feedback = state.get("remediation_feedback")
@@ -124,6 +146,15 @@ async def act_research_and_draft_node(state: SocialAgentState) -> Dict[str, Any]
         context=context,
         remediation_feedback=feedback
     )
+    
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="act_research_and_draft",
+        input_summary=f"Context: {len(context)} items, Platforms: {platforms}",
+        output_summary=f"Generated {len(drafts)} drafts",
+        token_usage={"total_tokens": len(str(drafts)) // 4}
+    )
 
     return {
         "draft_posts": drafts,
@@ -134,10 +165,21 @@ async def media_prep_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Observe Node: Delegates media validation and vision alt-text to MediaSpecialistAgent.
     """
+    campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     drafts = state.get("draft_posts", {})
     
     logger.info("[ACT] Media Specialist validates media URLs, enforces aspect ratios, and generates vision alt-text.")
     updated_drafts = await media_specialist_agent.process_media_assets(drafts)
+
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="media_prep",
+        input_summary=f"Drafts to prep media: {len(drafts)}",
+        output_summary=f"Prepped {len(updated_drafts)} drafts with alt_text",
+        token_usage={"total_tokens": len(str(updated_drafts)) // 4}
+    )
 
     return {
         "draft_posts": updated_drafts,
@@ -149,6 +191,8 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Reflect Node: Multi-metric LLM-as-a-Judge evaluation and composite quality gating.
     """
+    campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     drafts = state.get("draft_posts", {})
     context = state.get("research_context", [])
     retry_count = state.get("retry_count", 0)
@@ -161,6 +205,15 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     s_safety = worst_eval.safety_score
     logger.info("         Composite Q = %.4f | S_safety = %.4f | Retry = %d/3", q_score, s_safety, retry_count)
 
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="evaluate_audit",
+        input_summary=f"Auditing {len(drafts)} drafts",
+        output_summary=f"Q = {q_score:.3f}, Safe = {s_safety}",
+        token_usage={"total_tokens": len(str(worst_eval)) // 4}
+    )
+
     return {
         "audit_evaluation": worst_eval,
         "remediation_feedback": worst_eval.remediation_suggestions,
@@ -172,6 +225,8 @@ async def reflect_remedy_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Self-Healing Node: Determines recovery strategy, increments retry counter, and formats feedback.
     """
+    campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     current_retry = state.get("retry_count", 0) + 1
     eval_report = state.get("audit_evaluation")
     
@@ -179,6 +234,15 @@ async def reflect_remedy_node(state: SocialAgentState) -> Dict[str, Any]:
         category=ErrorCategory.QUALITY_THRESHOLD_FAIL,
         current_retry_count=current_retry,
         eval_report=eval_report
+    )
+
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="reflect_remedy",
+        input_summary=f"Fail reason: {eval_report.reasons if eval_report else 'Unknown'}",
+        output_summary=f"Retry {current_retry}/3, Directive: {directive.action.value}",
+        token_usage={"total_tokens": len(directive.feedback_payload or "") // 4}
     )
 
     return {
@@ -193,7 +257,8 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
     Human-in-the-Loop Node: Uses LangGraph interrupt() to pause workflow.
     Resumes upon receiving a Command(resume=...) payload from Django Admin.
     """
-    campaign_id = state.get("campaign_id", "")
+    campaign_id = state.get("campaign_id", "default_campaign")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     drafts = state.get("draft_posts", {})
     eval_report = state.get("audit_evaluation")
 
@@ -216,6 +281,15 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
                 "character_count": len(text)
             })
 
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id,
+        node_name="hitl_gate",
+        input_summary="Paused for HITL intervention",
+        output_summary=f"Approved: {approved}, Notes: {notes}",
+        token_usage={"total_tokens": 0}
+    )
+
     return {
         "hitl_payload": HITLApprovalPayload(
             required=True,
@@ -231,7 +305,10 @@ async def hitl_gate_node(state: SocialAgentState) -> Dict[str, Any]:
 async def publish_dispatch_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     Publish Node: Delegates to SocialPublisherAgent for MCP tool dispatching.
+    Persists successful SocialPost objects asynchronously to Tier 3.
     """
+    campaign_id = state.get("campaign_id")
+    thread_id = state.get("thread_id", f"thread_{campaign_id}")
     drafts = state.get("draft_posts", {})
     hitl_payload = state.get("hitl_payload")
     
@@ -241,6 +318,43 @@ async def publish_dispatch_node(state: SocialAgentState) -> Dict[str, Any]:
     
     published_ids = dispatch_res.get("published_post_ids", {})
     errors = dispatch_res.get("errors", [])
+    
+    await session_manager.append_turn_event(
+        thread_id=thread_id,
+        campaign_id=campaign_id or "default_campaign",
+        node_name="publish_dispatch",
+        input_summary=f"Drafts to publish: {len(drafts)}",
+        output_summary=f"Published platforms: {list(published_ids.keys())}, Errors: {len(errors)}",
+        token_usage={"total_tokens": sum(len(d.content) // 4 for d in drafts.values())}
+    )
+
+    # Tier 3: Async Relational Persistence (Django ORM)
+    try:
+        from social_agent.models import SocialCampaign, SocialPost
+        from django.utils import timezone
+        
+        campaign = None
+        if campaign_id:
+            campaign = await SocialCampaign.objects.filter(id=campaign_id).afirst()
+            
+        if campaign:
+            campaign.status = "PUBLISHED" if len(published_ids) > 0 else "FAILED"
+            await campaign.asave()
+            
+            for platform, post in drafts.items():
+                if platform in published_ids:
+                    await SocialPost.objects.acreate(
+                        campaign=campaign,
+                        platform=platform,
+                        post_text=post.content,
+                        media_urls=post.media_urls,
+                        alt_text=post.alt_text,
+                        external_post_id=published_ids[platform],
+                        published_at=timezone.now(),
+                        character_count=post.character_count
+                    )
+    except Exception as db_err:
+        logger.debug("Failed to conditionally persist records to Tier 3 (Django ORM): %s", db_err)
 
     return {
         "published_post_ids": published_ids,

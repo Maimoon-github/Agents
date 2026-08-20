@@ -176,3 +176,12 @@ class AgentAuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {self.node_name} ({self.campaign.title})"
+        
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            # Check if this object already exists in the database
+            raise ValueError("AgentAuditLog is append-only and cannot be updated.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("AgentAuditLog entries are immutable and cannot be deleted.")
