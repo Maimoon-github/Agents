@@ -33,7 +33,7 @@ class CopywritingCrew:
                 goal="Deconstruct brand context into targeted platform directives and viral hooks.",
                 backstory="You are an award-winning strategist guiding a multi-platform content syndicate.",
                 llm=self.llm,
-                verbose=False, max_iter=3, max_rpm=30
+                verbose=False, max_iter=3, max_rpm=30, respect_context_window=True
             )
             
             x_writer = Agent(
@@ -41,7 +41,7 @@ class CopywritingCrew:
                 goal="Craft highly technical, concise, authoritative micro-copy under 280 characters.",
                 backstory="A battle-tested tech Twitter ghostwriter who achieves extreme impact in few words.",
                 llm=self.llm,
-                verbose=False, max_iter=3, max_rpm=30
+                verbose=False, max_iter=3, max_rpm=30, respect_context_window=True
             )
             
             instagram_writer = Agent(
@@ -49,7 +49,7 @@ class CopywritingCrew:
                 goal="Draft visually evocative, structured captions culminating in engagement hooks.",
                 backstory="A master of visual storytelling and spacing, driving strong community engagement.",
                 llm=self.llm,
-                verbose=False, max_iter=3, max_rpm=30
+                verbose=False, max_iter=3, max_rpm=30, respect_context_window=True
             )
             
             tiktok_writer = Agent(
@@ -57,7 +57,7 @@ class CopywritingCrew:
                 goal="Generate high-energy, relatable, fast-paced short-form video hooks.",
                 backstory="A Gen-Z trend expert producing viral hooks for tech and education audiences.",
                 llm=self.llm,
-                verbose=False, max_iter=3, max_rpm=30
+                verbose=False, max_iter=3, max_rpm=30, respect_context_window=True
             )
             
             return {
@@ -123,7 +123,7 @@ class CopywritingCrew:
                     agents=[agents["strategist"]] + [agents[p] for p in platforms if p in agents],
                     tasks=tasks,
                     process=Process.sequential,
-                    verbose=False, max_iter=3, max_rpm=30
+                    verbose=False, max_iter=3, max_rpm=30, respect_context_window=True
                 )
                 # Ensure asyncio doesn't clash with sync kickoff
                 import asyncio
