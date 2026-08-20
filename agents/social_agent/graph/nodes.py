@@ -176,8 +176,14 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
     """
     drafts = state.get("draft_posts", {})
     context = state.get("research_context", [])
+    retry_count = state.get("retry_count", 0)
+    
+    logger.info("[PLAN] 1. Ingest candidate drafts, resolve target platform rules, and assemble ground-truth Brand RAG context.")
+    logger.info("[ACT] 2. Run pre-execution safety filters, dispatch drafts to the LLM Judge (Temp = 0.0), and calculate individual metric scores.")
     
     eval_map = await judge_evaluator.batch_evaluate(drafts, context)
+    
+    logger.info("[OBSERVE] 3. Aggregate scores into the composite metric Q, inspect safety flags, and capture any infrastructure exceptions.")
     
     worst_eval: Optional[AuditEvaluation] = None
     all_reasons = []
@@ -192,14 +198,23 @@ async def evaluate_audit_node(state: SocialAgentState) -> Dict[str, Any]:
             platform="general",
             overall_quality_score=1.0,
             is_safe=True,
-            reasons=[]
+            reasons=[],
+            faithfulness_score=1.0,
+            brand_voice_score=1.0,
+            formatting_score=1.0,
+            safety_score=1.0
         )
 
-    worst_eval.reasons = all_reasons
+    worst_eval.reasons = list(set(all_reasons))
+    
+    q_score = worst_eval.overall_quality_score
+    s_safety = worst_eval.safety_score
+    logger.info("         Composite Q = %.4f | S_safety = %.4f | Retry = %d/3", q_score, s_safety, retry_count)
+
     return {
         "audit_evaluation": worst_eval,
         "remediation_feedback": worst_eval.remediation_suggestions,
-        "execution_history": [f"Reflect: Audit completed. Overall Quality Q = {worst_eval.overall_quality_score:.3f}"]
+        "execution_history": [f"Reflect: Audit completed. Overall Quality Q = {q_score:.3f}"]
     }
 
 

@@ -221,7 +221,7 @@ class LLMJudgeEvaluator:
             formatting_score=format_score,
             safety_score=safety_score,
             overall_quality_score=composite_q,
-            is_safe=safety_score >= 0.95,
+            is_safe=float(safety_score) == 1.0,
             reasons=all_reasons,
             remediation_suggestions=remediation
         )
