@@ -61,9 +61,10 @@ class SocialAgentConfig(AppConfig):
             except Exception as otel_err:
                 logger.warning("OpenTelemetry setup failed in apps.ready(): %s", otel_err)
 
-        # 4. Automatic Config Bootstrapping on post_migrate
+        # 4. Automatic Config & Agent Bootstrapping on post_migrate
         from django.db.models.signals import post_migrate
         post_migrate.connect(self._bootstrap_credentials, sender=self)
+        post_migrate.connect(self._bootstrap_agents, sender=self)
 
         logger.info("SocialAgentConfig.ready() completed successfully.")
 
@@ -107,3 +108,29 @@ class SocialAgentConfig(AppConfig):
                     )
         except Exception as exc:
             logger.debug("Automatic credential bootstrapping skipped: %s", exc)
+
+    def _bootstrap_agents(self, sender, **kwargs):
+        """Seeds predefined AgentConfiguration profiles."""
+        try:
+            from social_agent.models import AgentConfiguration
+            
+            profiles = [
+                ("researcher", "Trend Researcher", "qwen2.5:32b-instruct", 0.2, 2048),
+                ("copywriter", "Copywriter", "llama3.3:70b-instruct", 0.7, 4096),
+                ("media_specialist", "Media Specialist", "llama3.2:11b-vision", 0.1, 1024),
+                ("auditor", "Compliance Auditor", "llama3.3:70b-instruct", 0.0, 2048),
+                ("publisher", "Social Publisher", "mistral-small:24b", 0.0, 1024),
+            ]
+            
+            for role, display, model, temp, tokens in profiles:
+                AgentConfiguration.objects.get_or_create(
+                    agent_role=role,
+                    defaults={
+                        "display_name": display,
+                        "model_name": os.environ.get(f"{role.upper()}_LLM_MODEL", model),
+                        "temperature": temp,
+                        "max_tokens": tokens,
+                    }
+                )
+        except Exception as exc:
+            logger.debug("Automatic agent bootstrapping skipped: %s", exc)

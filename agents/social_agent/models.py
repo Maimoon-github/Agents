@@ -101,11 +101,13 @@ class AgentConfiguration(models.Model):
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     agent_role = models.CharField(max_length=32, choices=ROLE_CHOICES, unique=True)
+    display_name = models.CharField(max_length=128, default="Agent")
     model_name = models.CharField(max_length=128, default="llama3.3:70b-instruct")
     temperature = models.FloatField(default=0.7)
     max_tokens = models.IntegerField(default=4000)
     endpoint_url = models.URLField(blank=True, null=True, help_text="Custom LLM API Endpoint")
     is_active = models.BooleanField(default=True)
+    system_prompt_override = models.TextField(blank=True, null=True, help_text="Override the default system prompt")
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

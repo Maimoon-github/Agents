@@ -62,6 +62,7 @@ class PlatformAccountAdmin(admin.ModelAdmin):
 @admin.register(AgentConfiguration)
 class AgentConfigAdmin(admin.ModelAdmin):
     list_display = [
+        "display_name",
         "agent_role",
         "model_name",
         "temperature",
@@ -71,7 +72,12 @@ class AgentConfigAdmin(admin.ModelAdmin):
     ]
     list_editable = ["temperature", "is_active"]
     list_filter = ["is_active", "agent_role"]
-    search_fields = ["agent_role", "model_name"]
+    search_fields = ["display_name", "agent_role", "model_name"]
+    readonly_fields = ["agent_role"]
+
+    def has_delete_permission(self, request, obj=None):
+        # Predefined agent core records cannot be deleted
+        return False
 
 
 # ──────────────────────────────────────────────────────────────────────────────
